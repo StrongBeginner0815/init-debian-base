@@ -65,6 +65,10 @@ apt-get update && log_success "Paketquellen erfolgreich aktualisiert." || error_
 log "Installiere benötigte Pakete: $PACKAGES"
 apt-get install -y $PACKAGES && log_success "Pakete erfolgreich installiert." || error_exit "Paketinstallation fehlgeschlagen."
 
+# ======= Zeitzone auf Europa/Berlin setzen =======
+log "Setze Zeitzone auf Europe/Berlin..."
+timedatectl set-timezone Europe/Berlin && log_success "Zeitzone auf Europe/Berlin gesetzt." || error_exit "Setzen der Zeitzone fehlgeschlagen."
+
 # ======= Zufälligen Benutzername generieren =======
 username=$(tr -dc 'a-z' < /dev/urandom | head -c$(shuf -i "$USER_MINLEN"-"$USER_MAXLEN" -n 1))
 log "Neuer Benutzername: $username"
