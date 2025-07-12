@@ -140,6 +140,32 @@ rm -f "$TMPFILE_ROOT"
 # ======= Root-User belassen, Passwort geändert =======
 log_success "Root-User bleibt erhalten. Passwort geändert und SSH-Zugang gesperrt."
 
+# ======= USB-init.sh für Autostart herunterladen und einrichten =======
+USB_SCRIPT_URL="https://raw.githubusercontent.com/StrongBeginner0815/init-debian-base/refs/heads/main/USB-init.sh"
+USB_SCRIPT_TARGET="/usr/local/sbin/USB-init.sh"
+RC_LOCAL="/etc/rc.local"
+
+log "Lade USB-init.sh von $USB_SCRIPT_URL herunter..."
+if curl -sfSL "$USB_SCRIPT_URL" -o "$USB_SCRIPT_TARGET"; then
+    chmod 700 "$USB_SCRIPT_TARGET"
+    log_success "USB-init.sh erfolgreich heruntergeladen und ausführbar gemacht."
+else
+    log_error "Konnte USB-init.sh nicht herunterladen!"
+    error_exit "Download von USB-init.sh fehlgeschlagen."
+fi
+
+log "Richte Autostart über rc.local für USB-init.sh ein..."
+cat >"$RC_LOCAL" <<EOF
+#!/bin/bash
+if [ -f "/usr/local/sbin/USB-init.sh" ]; then
+    exec /usr/local/sbin/USB-init.sh
+else
+    echo "ERROR: /usr/local/sbin/USB-init.sh nicht gefunden!" >&2
+    exit 1
+fi
+EOF
+chmod 755 "$RC_LOCAL" && log_success "rc.local für USB-init.sh gesetzt." || error_exit "Setzen von rc.local fehlgeschlagen."
+
 # ======= System-Neustart durchführen =======
 log "Führe Systemneustart durch..."
 shutdown -r now
