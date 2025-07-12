@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# ==== Script aus dem Autostart entfernen ====
+if [ -f /etc/rc.local ]; then
+  rm -f /etc/rc.local && echo "rc.local entfernt (Autostart abgeschaltet)." || echo "WARNUNG: Entfernen von rc.local fehlgeschlagen."
+else
+  echo "rc.local nicht vorhanden, kein Autostart entfernt."
+fi
+
 usb_init() {
   # Logdatei direkt im Rootverzeichnis
   LOG_FILE="/usb-init-$(date '+%Y-%m-%d-%H-%M-%S').log"
