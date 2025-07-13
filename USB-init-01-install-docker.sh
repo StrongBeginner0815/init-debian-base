@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Initialisierung der Variablen
-LOG_DATEI="/download-install-docker-$(date '+%Y-%m-%d-%H-%M-%S').log"
+LOG_FILE="/download-install-docker-$(date '+%Y-%m-%d-%H-%M-%S').log"
 
 # Funktion zum Umgang mit Fehlern
 error_handler() {
