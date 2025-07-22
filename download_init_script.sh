@@ -5,8 +5,8 @@
 # Author: https://github.com/StrongBeginner0815
 FILENAME="download-init_Script.sh"
 # Zuständig für das Herunterladen des init_and_reboot-Scripts:
-# - lädt das eigentliche Init-Script herunter,
-# - richtet den Autostart per rc.local ein.
+# - lädt das eigentliche Init-Script herunter
+# - richtet den Autostart per rc.local ein
 # ========================================
 
 # ======= Konfigurationsvariablen =======
