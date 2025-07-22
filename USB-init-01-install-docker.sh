@@ -14,9 +14,11 @@ FILENAME="USB-init-01-install-docker.sh"
 
 # ======= Konfigurationsvariablen =======
 DEPENDENCIES="ca-certificates curl"
-GPG_KEY_URL="https://download.docker.com/linux/debian/gpg"
 GPG_KEY_PATH="/etc/apt/keyrings/docker.asc"
 DOCKER_LIST="/etc/apt/sources.list.d/docker.list"
+GPG_KEY_URL=""
+DISTRO=""
+CODENAME=""
 
 # ======= Logging konfigurieren =======
 LOGFILE="/$(date +'%Y-%m-%d--%H-%M-%S')-$FILENAME.log"
@@ -39,17 +41,38 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-# ======= Distributionserkennung (nur Debian) =======
-if [[ ! -f /etc/debian_version ]]; then
-    error_exit "Dieses Skript ist ausschließlich für DEBIAN konzipiert!"
-fi
-log "Debian-System erkannt."
-
 # ======= Rechte-Prüfung =======
 if [[ $EUID -ne 0 ]]; then
     log_error "Dieses Skript muss als root ausgeführt werden."
     exit 1
 fi
+
+# ======= Distributionserkennung (Debian oder Ubuntu) =======
+if [[ ! -f /etc/os-release ]]; then
+    error_exit "Kann /etc/os-release nicht finden. Nicht unterstützt!"
+fi
+
+# OS-Infos auslesen
+. /etc/os-release
+
+if [[ "$ID" == "debian" ]]; then
+    DISTRO="debian"
+    GPG_KEY_URL="https://download.docker.com/linux/debian/gpg"
+    log "Debian-System erkannt."
+elif [[ "$ID" == "ubuntu" ]]; then
+    DISTRO="ubuntu"
+    GPG_KEY_URL="https://download.docker.com/linux/ubuntu/gpg"
+    log "Ubuntu-System erkannt."
+else
+    error_exit "Dieses Skript ist ausschließlich für DEBIAN oder UBUNTU konzipiert!"
+fi
+
+CODENAME=${VERSION_CODENAME:-}
+
+if [[ -z $CODENAME ]]; then
+    error_exit "Konnte den Distributionsnamen (VERSION_CODENAME) nicht bestimmen!"
+fi
+log "Distribution: $DISTRO, Codename: $CODENAME"
 
 # ======= Alte Docker-Pakete entfernen =======
 log "Entferne mögliche alte Docker-Pakete..."
@@ -77,10 +100,8 @@ else
 fi
 
 log "Füge Docker-Repository zu den APT-Quellen hinzu..."
-# Debian-Release (z.B. bookworm, bullseye) holen:
-CODENAME="$(. /etc/os-release && echo "${VERSION_CODENAME}")"
 echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=$GPG_KEY_PATH] https://download.docker.com/linux/debian $CODENAME stable" > "$DOCKER_LIST"
+  "deb [arch=$(dpkg --print-architecture) signed-by=$GPG_KEY_PATH] https://download.docker.com/linux/$DISTRO $CODENAME stable" > "$DOCKER_LIST"
 log_success "Docker-Repository hinzugefügt."
 
 log "Aktualisiere Paketliste (apt update)..."
