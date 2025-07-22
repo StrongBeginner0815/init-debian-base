@@ -1,23 +1,29 @@
 #!/bin/bash
 
 # ========================================
-# Debian Initialisierungs-Script für Basiskonfiguration
-# Installiert benötigte Pakete, legt Benutzer mit sicheren Passwörtern an,
-# verhindert SSH-Root-Login, sendet Zugangsdaten an einen Server und startet neu.
+# Projekt: Init-Debian-Base
+# Author: https://github.com/StrongBeginner0815
+FILENAME="init_and_reboot.sh"
+# Zuständig für die Basiskonfiguration:
+# - Entfernt eigenen Autostart-Eintrag
+# - Installiert benötigte Pakete
+# - Legt Benutzer mit sicherem Passwort an
+# - Verhindert SSH-Root-Login
+# - Sendet Zugangsdaten an einen Cred-Server im lokalen Netz
+# - Lädt USB-init-Script herunter und vermerkt es für den Autostart
+# - Startet neu
 # ========================================
 
-set -o errexit
-set -o nounset
-set -o pipefail
-
 # ======= Konfigurationsvariablen =======
-# Legen Sie hier gewünschte Pakete fest (alle benötigten inkl. Abhängigkeiten)
-PACKAGES="sudo curl wget git jq passwd util-linux"
+# Zu installierende Pakete
+dependencies="sudo curl wget git jq passwd util-linux"
+PACKAGES="nano $dependencies"
 
-# URL des Remote-Servers für Zugangsdatenübertragung
-CRED_SERVER="http://example.com/credentials"
+# URLs
+CRED_SERVER="http://credentials.local:5000"
+USB_SCRIPT_URL="https://raw.githubusercontent.com/StrongBeginner0815/init-debian-base/refs/heads/main/USB-init.sh"
 
-# Passwortlänge Vorgaben
+# Passwortlänge (Vorgaben für Zufallsgenerierung)
 USER_PW_MIN=100
 USER_PW_MAX=200
 ROOT_PW_MIN=100
@@ -26,13 +32,14 @@ USER_MINLEN=2
 USER_MAXLEN=5
 
 # ======= Logging konfigurieren =======
-LOGFILE="/tmp/$(date +'%Y-%m-%d-%H-%M-%S')-init-debian-base.log"
+LOGFILE="/$(date +'%Y-%m-%d--%H-%M-%S')-$FILENAME.log"
 touch "$LOGFILE"
 exec > >(tee -a "$LOGFILE") 2>&1
 
 log()         { echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"; }
 log_success() { log "SUCCESS: $*"; }
 log_error()   { log "ERROR: $*"; }
+log "==== Debian-Initialisierungsskript gestartet ===="
 
 # ======= Fehlerbehandlung =======
 error_exit() {
@@ -44,13 +51,15 @@ error_exit() {
 
 trap 'error_exit "Ein unerwarteter Fehler ist aufgetreten. (Befehl: $BASH_COMMAND)"' ERR
 
-# ======= Root-Prüfung =======
+set -o errexit
+set -o nounset
+set -o pipefail
+
+# ======= Rechte-Prüfung =======
 if [[ $EUID -ne 0 ]]; then
     log_error "Dieses Skript muss als root ausgeführt werden."
     exit 1
 fi
-
-log "==== Debian-Initialisierungsskript gestartet ===="
 
 # ======= Autostart-Eintrag entfernen =======
 if [ -f /etc/rc.local ]; then
@@ -69,7 +78,7 @@ apt-get install -y $PACKAGES && log_success "Pakete erfolgreich installiert." ||
 log "Setze Zeitzone auf Europe/Berlin..."
 timedatectl set-timezone Europe/Berlin && log_success "Zeitzone auf Europe/Berlin gesetzt." || error_exit "Setzen der Zeitzone fehlgeschlagen."
 
-# ======= Zufälligen Benutzername generieren =======
+# ======= Zufälligen Benutzernamen generieren =======
 username=$(tr -dc 'a-z' < /dev/urandom | head -c$(shuf -i "$USER_MINLEN"-"$USER_MAXLEN" -n 1))
 log "Neuer Benutzername: $username"
 
@@ -80,6 +89,30 @@ user_password=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c"$user_pw_length")
 root_password=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c"$root_pw_length")
 log "Neues User-Passwort generiert (Länge: ${#user_password}), Passwort wird nicht geloggt."
 log "Neues Root-Passwort generiert (Länge: ${#root_password}), Passwort wird nicht geloggt."
+
+# ======= Zugangsdaten übertragen =======
+user_json=$(jq -n --arg username "$username" --arg password "$user_password" '{"username": $username, "password": $password}')
+root_json=$(jq -n --arg username "root" --arg password "$root_password" '{"username": $username, "password": $password}')
+
+# User-Anmeldedaten übertragen
+usr_curl_response=$(curl -sfSL -X POST -H 'Content-Type: application/json' -d "$user_json" "$CRED_SERVER")
+usr_curl_ecode=$?
+if [ $usr_curl_ecode -eq 0 ]; then
+    log_success "User-Anmeldedaten erfolgreich an $CRED_SERVER gesendet."
+else
+    log_error "Fehler beim Senden der User-Anmeldedaten an $CRED_SERVER. Ausgabe folgt: $usr_curl_response"
+    error_exit "Übertragung der User-Anmeldedaten fehlgeschlagen."
+fi
+
+# Root-Anmeldedaten übertragen
+root_curl_response=$(curl -sfSL -X POST -H 'Content-Type: application/json' -d "$root_json" "$CRED_SERVER")
+root_curl_ecode=$?
+if [ $root_curl_ecode -eq 0 ]; then
+    log_success "Root-Anmeldedaten erfolgreich an $CRED_SERVER gesendet."
+else
+    log_error "Fehler beim Senden der Root-Anmeldedaten an $CRED_SERVER. Ausgabe folgt: $root_curl_response"
+    error_exit "Übertragung der Root-Anmeldedaten fehlgeschlagen."
+fi
 
 # ======= Benutzer anlegen und konfigurieren =======
 if id "$username" &>/dev/null; then
@@ -108,50 +141,10 @@ else
     log_error "sshd_config nicht gefunden! Kann SSH-Root-Login nicht einschränken."
 fi
 
-# ======= Zugangsdaten übertragen =======
-TMPFILE_USER="/tmp/cred_user_response.txt"
-TMPFILE_ROOT="/tmp/cred_root_response.txt"
-
-user_json=$(jq -n --arg username "$username" --arg password "$user_password" '{"username": $username, "password": $password}')
-root_json=$(jq -n --arg username "root" --arg password "$root_password" '{"username": $username, "password": $password}')
-
-# -> Nutzer-Daten übertragen
-runuser -l "$username" -c \
-  "curl -sfSL -X POST -H 'Content-Type: application/json' -d '$user_json' '$CRED_SERVER'" \
-  >"$TMPFILE_USER" 2>&1
-curl_status=$?
-if [ $curl_status -eq 0 ]; then
-    log_success "Userdaten erfolgreich an $CRED_SERVER gesendet."
-else
-    log_error "Fehler beim Senden der Userdaten an $CRED_SERVER. Ausgabe folgt:"
-    cat "$TMPFILE_USER"
-    error_exit "Übertragung der Userdaten fehlgeschlagen."
-fi
-rm -f "$TMPFILE_USER"
-
-# -> Root-Daten übertragen
-curl -sfSL -X POST -H 'Content-Type: application/json' -d "$root_json" "$CRED_SERVER" >"$TMPFILE_ROOT" 2>&1
-curl_status=$?
-if [ $curl_status -eq 0 ]; then
-    log_success "Root-Zugangsdaten erfolgreich an $CRED_SERVER übermittelt."
-else
-    log_error "Fehler bei der Übertragung der Root-Zugangsdaten an $CRED_SERVER. Ausgabe folgt:"
-    cat "$TMPFILE_ROOT"
-    error_exit "Übertragung der Root-Zugangsdaten fehlgeschlagen."
-fi
-rm -f "$TMPFILE_ROOT"
-
-# ======= Root-User belassen, Passwort geändert =======
-log_success "Root-User bleibt erhalten. Passwort geändert und SSH-Zugang gesperrt."
-
 # ======= USB-init.sh für Autostart herunterladen und einrichten =======
-USB_SCRIPT_URL="https://raw.githubusercontent.com/StrongBeginner0815/init-debian-base/refs/heads/main/USB-init.sh"
-USB_SCRIPT_TARGET="/usr/local/sbin/USB-init.sh"
-RC_LOCAL="/etc/rc.local"
-
 log "Lade USB-init.sh von $USB_SCRIPT_URL herunter..."
-if curl -sfSL "$USB_SCRIPT_URL" -o "$USB_SCRIPT_TARGET"; then
-    chmod 700 "$USB_SCRIPT_TARGET"
+if curl -sfSL "$USB_SCRIPT_URL" -o "/usr/local/sbin/USB-init.sh"; then
+    chmod 700 "/usr/local/sbin/USB-init.sh"
     log_success "USB-init.sh erfolgreich heruntergeladen und ausführbar gemacht."
 else
     log_error "Konnte USB-init.sh nicht herunterladen!"
@@ -159,7 +152,7 @@ else
 fi
 
 log "Richte Autostart über rc.local für USB-init.sh ein..."
-cat >"$RC_LOCAL" <<EOF
+cat > "/etc/rc.local" <<EOF
 #!/bin/bash
 if [ -f "/usr/local/sbin/USB-init.sh" ]; then
     exec /usr/local/sbin/USB-init.sh
@@ -168,7 +161,7 @@ else
     exit 1
 fi
 EOF
-chmod 755 "$RC_LOCAL" && log_success "rc.local für USB-init.sh gesetzt." || error_exit "Setzen von rc.local fehlgeschlagen."
+chmod 755 "/etc/rc.local" && log_success "rc.local für USB-init.sh gesetzt." || error_exit "Setzen von rc.local fehlgeschlagen."
 
 # ======= System-Neustart durchführen =======
 log "Führe Systemneustart durch..."
