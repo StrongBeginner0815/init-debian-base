@@ -1,11 +1,12 @@
 #!/bin/bash
 
 # ========================================
-# Projekt: Init-Debian-Base Download-Skript
+# Projekt: Init-Debian-Base
 # Author: https://github.com/StrongBeginner0815
 FILENAME="download-init_Script.sh"
-# Dieses Skript lädt das eigentliche Initskript herunter,
-# richtet den Autostart per rc.local ein und prüft die Voraussetzungen.
+# Zuständig für das Herunterladen des init_and_reboot-Scripts:
+# - lädt das eigentliche Init-Script herunter,
+# - richtet den Autostart per rc.local ein.
 # ========================================
 
 # ======= Konfigurationsvariablen =======
