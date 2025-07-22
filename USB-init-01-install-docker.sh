@@ -1,79 +1,109 @@
 #!/bin/bash
-set -euo pipefail
 
-# Initialisierung der Variablen
-LOG_FILE="/download-install-docker-$(date '+%Y-%m-%d-%H-%M-%S').log"
+# ========================================
+# Projekt: Init-Debian-Base
+# Author: https://github.com/StrongBeginner0815
+FILENAME="USB-init-01-install-docker.sh"
+# Zuständig für die Installation von Docker:
+# - entfernt alte Docker-Pakete
+# - installiert benötigte Abhängigkeiten
+# - richtet das Docker-Repository für Debian ein
+# - installiert Docker und zugehörige Tools
+# - fügt alle User (außer root) der Docker-Gruppe hinzu
+# ========================================
 
-# Funktion zum Umgang mit Fehlern
-error_handler() {
-  # Ausgabe eines Fehlers und Beenden des Skripts
-  echo "FEHLER: $*" >&2
-  echo "FEHLER: $*" >> "$LOG_FILE"
-  exit 1
+# ======= Konfigurationsvariablen =======
+DEPENDENCIES="ca-certificates curl"
+GPG_KEY_URL="https://download.docker.com/linux/debian/gpg"
+GPG_KEY_PATH="/etc/apt/keyrings/docker.asc"
+DOCKER_LIST="/etc/apt/sources.list.d/docker.list"
+
+# ======= Logging konfigurieren =======
+LOGFILE="/$(date +'%Y-%m-%d--%H-%M-%S')-$FILENAME.log"
+touch "$LOGFILE"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+log()         { echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"; }
+log_success() { log "SUCCESS: $*"; }
+log_error()   { log "ERROR: $*"; }
+log "==== Docker-Installationsskript gestartet ===="
+
+# ======= Fehlerbehandlung =======
+error_exit() {
+    log_error "$*"
+    exit 1
 }
+trap 'error_exit "Ein unerwarteter Fehler ist aufgetreten. (Befehl: $BASH_COMMAND)"' ERR
 
-# Überprüfung, ob das Skript als root ausgeführt wird
-echo "Überprüfung der Benutzerrechte..." >> "$LOG_FILE"
-if [ "$(id -u)" -ne 0 ]; then
-  error_handler "Das Skript muss als root ausgeführt werden."
+set -o errexit
+set -o nounset
+set -o pipefail
+
+# ======= Distributionserkennung (nur Debian) =======
+if [[ ! -f /etc/debian_version ]]; then
+    error_exit "Dieses Skript ist ausschließlich für DEBIAN konzipiert!"
 fi
-echo "Benutzerrechte sind korrekt." >> "$LOG_FILE"
+log "Debian-System erkannt."
 
-# Beginn der Installation von Docker
-echo "Beginn der Installation von Docker am $(date)" >> "$LOG_FILE"
-
-# Aktualisierung der Paketliste
-echo "Aktualisiere die Paketliste..." >> "$LOG_FILE"
-if ! apt-get -y update; then
-  error_handler "Fehler bei der Aktualisierung der Paketliste"
+# ======= Rechte-Prüfung =======
+if [[ $EUID -ne 0 ]]; then
+    log_error "Dieses Skript muss als root ausgeführt werden."
+    exit 1
 fi
-echo "Paketliste erfolgreich aktualisiert." >> "$LOG_FILE"
 
-# Deinstallation von möglichen Resten
-echo "Deinstallation von möglichen Resten..." >> "$LOG_FILE"
+# ======= Alte Docker-Pakete entfernen =======
+log "Entferne mögliche alte Docker-Pakete..."
 for PAKET in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
-  if ! sudo apt-get -y remove "$PAKET"; then
-    error_handler "Fehler bei der Deinstallation von $PAKET"
-  fi
+    apt-get -y remove "$PAKET" && log "Altes Paket entfernt: $PAKET" || true
 done
-echo "Mögliche Reste erfolgreich deinstalliert." >> "$LOG_FILE"
+log_success "Alte Docker-Pakete entfernt (sofern vorhanden)."
 
-# Hinzufügen des offiziellen Docker-GPG-Schlüssels
-echo "Hinzufügen des offiziellen Docker-GPG-Schlüssels..." >> "$LOG_FILE"
-if ! apt-get -y install ca-certificates curl; then
-  error_handler "Fehler bei der Installation von ca-certificates und curl"
-fi
-if ! install -m 0755 -d /etc/apt/keyrings; then
-  error_handler "Fehler beim Erstellen des Verzeichnisses /etc/apt/keyrings"
-fi
-if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc; then
-  error_handler "Fehler beim Herunterladen des Docker-GPG-Schlüssels"
-fi
-if ! chmod a+r /etc/apt/keyrings/docker.asc; then
-  error_handler "Fehler beim Ändern der Berechtigungen für den Docker-GPG-Schlüssel"
-fi
-echo "Offizieller Docker-GPG-Schlüssel erfolgreich hinzugefügt." >> "$LOG_FILE"
+# ======= Abhängigkeiten installieren =======
+log "Aktualisiere Paketliste (apt update)..."
+apt-get update && log_success "Paketquellen erfolgreich aktualisiert."
+log "Installiere benötigte Pakete: $DEPENDENCIES"
+apt-get install -y $DEPENDENCIES && log_success "Pakete erfolgreich installiert."
 
-# Hinzufügen des Docker-Repositorys zu den Apt-Quellen
-echo "Hinzufügen des Docker-Repositorys zu den Apt-Quellen..." >> "$LOG_FILE"
-if ! echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
-  tee /etc/apt/sources.list.d/docker.list > /dev/null; then
-  error_handler "Fehler beim Hinzufügen des Docker-Repositorys"
-fi
-if ! apt-get -y update; then
-  error_handler "Fehler bei der Aktualisierung der Paketliste nach dem Hinzufügen des Docker-Repositorys"
-fi
-echo "Docker-Repository erfolgreich zu den Apt-Quellen hinzugefügt." >> "$LOG_FILE"
+# ======= Docker-GPG-Key & Repository einrichten =======
+log "Richte Keyrings-Verzeichnis ein..."
+install -m 0755 -d /etc/apt/keyrings
 
-# Installation von Docker
-echo "Installation von Docker..." >> "$LOG_FILE"
-if ! apt-get -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
-  error_handler "Fehler bei der Installation von Docker"
+log "Lade Docker-GPG-KEY herunter..."
+if curl -fsSL "$GPG_KEY_URL" -o "$GPG_KEY_PATH"; then
+    chmod a+r "$GPG_KEY_PATH"
+    log_success "Docker-GPG-KEY erfolgreich heruntergeladen und gesetzt."
+else
+    error_exit "Fehler beim Herunterladen des Docker-GPG-KEYs."
 fi
-echo "Docker erfolgreich installiert." >> "$LOG_FILE"
 
-# Abschlussmeldung
-echo "Installation von Docker abgeschlossen am $(date)" >> "$LOG_FILE"
-echo "Docker sollte jetzt erfolgreich installiert sein."
+log "Füge Docker-Repository zu den APT-Quellen hinzu..."
+# Debian-Release (z.B. bookworm, bullseye) holen:
+CODENAME="$(. /etc/os-release && echo "${VERSION_CODENAME}")"
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=$GPG_KEY_PATH] https://download.docker.com/linux/debian $CODENAME stable" > "$DOCKER_LIST"
+log_success "Docker-Repository hinzugefügt."
+
+log "Aktualisiere Paketliste (apt update)..."
+apt-get update && log_success "Paketquellen nach Repository-Erweiterung aktualisiert."
+
+# ======= Docker installieren =======
+log "Installiere Docker-CE, BuildKit & Compose..."
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && \
+    log_success "Docker und Komponenten erfolgreich installiert."
+
+# ======= User zur docker-Gruppe hinzufügen (außer root) =======
+log "Füge alle Benutzer (außer root) der 'docker'-Gruppe hinzu..."
+# Stelle sicher, dass die Gruppe existiert (sollte durch Paket automatisch kommen, aber zur Sicherheit):
+getent group docker >/dev/null 2>&1 || groupadd docker
+
+while IFS=: read -r username _ uid _ _ _ home; do
+    if [[ $uid -ge 1000 && "$username" != "nobody" && "$username" != "root" ]]; then
+        usermod -aG docker "$username"
+        log "Benutzer $username zur Gruppe 'docker' hinzugefügt."
+    fi
+done </etc/passwd
+log_success "Benutzer zur Docker-Gruppe hinzugefügt."
+
+log_success "Docker-Installationsskript erfolgreich ausgeführt."
+
+exit 0
